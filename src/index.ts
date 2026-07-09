@@ -3,6 +3,7 @@ import Decimal from "decimal.js"
 type JsFreeFloatParseOptions = {
   /**
    * The minimum allowable value. Defaults to -Infinity.
+   * Also used as the default value for empty input (unless keepEmpty is set).
    * */
   min?: number
   /**
@@ -18,6 +19,26 @@ type JsFreeFloatParseOptions = {
    * The number of decimal places to include in the float output. Does not round the number, just cut
    * */
   decimals?: number
+  /**
+   * If true, empty input (or input containing no digits at all, e.g. "abc")
+   * returns ["", 0] instead of the min-based default. Defaults to false.
+   * */
+  keepEmpty?: boolean
+  /**
+   * If false, min/max are not enforced on the parsed value (min is still used
+   * as the default for empty input). Useful for per-keystroke parsing where
+   * clamping should only happen on blur — parse with clamp: false while
+   * typing, then re-parse with the default on blur. Defaults to true.
+   * */
+  clamp?: boolean
+  /**
+   * Opt-in heuristic for group (thousands) separators: a comma directly
+   * between a digit and a group of exactly 3 digits is treated as a group
+   * separator and stripped, so "1,234.56" parses as 1234.56 and "1,234,567"
+   * as 1234567. A comma followed by 1-2 or 4+ digits is still treated as a
+   * decimal separator. Defaults to false.
+   * */
+  groupSeparators?: boolean
 }
 
 function replaceDotByComma(input: string, dot = false) {
@@ -40,7 +61,7 @@ function applyDecimals(input: string, decimals: number | undefined) {
 
 export default function jsFreeFloatParse(input: string, options?: JsFreeFloatParseOptions) {
   try {
-    const { min, max, dot = false, decimals } = options || {}
+    const { min, max, dot = false, decimals, keepEmpty = false, clamp = true, groupSeparators = false } = options || {}
 
     const isMin = typeof min === "number"
     const isMax = typeof max === "number"
@@ -54,8 +75,16 @@ export default function jsFreeFloatParse(input: string, options?: JsFreeFloatPar
       return [outputString, outputNumber.toNumber()] as const
     }
 
-    if (!input) {
+    // eslint-disable-next-line no-inner-declarations
+    function emptyResult() {
+      if (keepEmpty) {
+        return ["", 0] as const
+      }
       return result()
+    }
+
+    if (!input) {
+      return emptyResult()
     }
 
     // Some short exceptions
@@ -85,55 +114,55 @@ export default function jsFreeFloatParse(input: string, options?: JsFreeFloatPar
       }
     }
 
-    // E cases
-    switch (true) {
-      case input.includes("e+"):
-      case input.includes("e-"): {
-        // Split the number into coefficient and exponent parts
-        const [coefficientStr, exponentStr] = input.split("e")
-        // Parse the exponent part into an integer
-        const exponent = parseInt(exponentStr, 10)
+    // Expand exponent notation ("5e-8", "1.5E+3", "-1.5e-3", "1e5") into a
+    // plain decimal string, then continue with the regular flow below so that
+    // sign, min/max and decimals are handled uniformly
+    if (/\de\s*[+-]?\d/i.test(input)) {
+      // Split the number into coefficient and exponent parts
+      const [coefficientStr, exponentStr] = input.split(/e/i)
+      // Parse the exponent part into an integer
+      const exponent = parseInt(exponentStr.replace(/[^\d+-]/g, ""), 10)
 
-        // Split the coefficient part into integer and decimal parts
-        const [integerPart, decimalPart = ""] = coefficientStr.replaceAll(".", ",").split(",")
-
-        // When the exponent is positive
-        if (exponent > 0) {
-          // Calculate the length of the decimal part
-          const totalDecimalLength = decimalPart.length
-
-          if (totalDecimalLength > exponent) {
-            // If the decimal part is longer than the exponent
-            // Move the decimal point to the right within the decimal part
-            const newIntegerPart = integerPart + decimalPart.slice(0, exponent)
-            const newDecimalPart = decimalPart.slice(exponent)
-            outputString = newIntegerPart + "." + newDecimalPart
-          } else {
-            // If the decimal part is shorter or equal to the exponent
-            // Add necessary zeros to the end of the integer part
-            const zeroPadding = "0".repeat(exponent - totalDecimalLength)
-            outputString = integerPart + decimalPart + zeroPadding
-          }
-          // When the exponent is negative
-        } else {
-          // Calculate the necessary zeros to pad before the integer part
-          const zeroPadding = "0".repeat(Math.abs(exponent) - 1)
-          // Construct the result string with leading zeros
-          outputString = "0." + zeroPadding + integerPart + decimalPart
-        }
-
-        // Set decimals
-        outputString = applyDecimals(outputString, decimals)
-        outputNumber = new Decimal(outputString)
-
-        return result()
+      // Guard against absurd exponents that would expand into huge strings —
+      // such values are not representable as JS numbers anyway, so treat them
+      // like input without digits
+      if (Math.abs(exponent) > 10000) {
+        return emptyResult()
       }
+
+      // Handle the sign before expanding — it must not end up inside the digits
+      const isNegativeCoefficient = /^\s*-/.test(coefficientStr)
+      const coefficient = coefficientStr.replace(/[^\d.,]/g, "").replaceAll(",", ".")
+
+      // Split the coefficient part into integer and decimal parts
+      const [integerPart, decimalPart = ""] = coefficient.split(".")
+      const digits = integerPart + decimalPart
+      // Position of the decimal point within the digits after applying the exponent
+      const pointPosition = integerPart.length + exponent
+
+      let expanded: string
+      if (pointPosition <= 0) {
+        // The point moves past the leftmost digit — pad with leading zeros
+        expanded = "0." + "0".repeat(-pointPosition) + digits
+      } else if (pointPosition >= digits.length) {
+        // The point moves past the rightmost digit — pad with trailing zeros
+        expanded = digits + "0".repeat(pointPosition - digits.length)
+      } else {
+        expanded = digits.slice(0, pointPosition) + "." + digits.slice(pointPosition)
+      }
+
+      input = (isNegativeCoefficient ? "-" : "") + expanded
     }
 
-    const isNegative = input.startsWith("-")
+    const isNegative = /^\s*-/.test(input)
 
     // Remove non-digit signs excluding dot and comma
     input = input.replace(/[^\d.,]/g, "")
+
+    // Strip group (thousands) commas: a comma between a digit and exactly 3 digits
+    if (groupSeparators) {
+      input = input.replace(/(\d),(?=\d{3}(?:\D|$))/g, "$1")
+    }
 
     // Replace all commas with dots
     input = input.replaceAll(",", ".")
@@ -154,6 +183,15 @@ export default function jsFreeFloatParse(input: string, options?: JsFreeFloatPar
       }
     }
 
+    // Input contained no digits at all (e.g. "abc")
+    if (!input) {
+      if (isNegative) {
+        outputString = "-"
+        return result()
+      }
+      return emptyResult()
+    }
+
     // Remove leading zeros
     if (input.startsWith("0")) {
       input = input.replace(/^0*(?=\d)/, "")
@@ -171,14 +209,16 @@ export default function jsFreeFloatParse(input: string, options?: JsFreeFloatPar
     outputString = input
 
     // Apply min/max
-    if (isMin && outputNumber.lt(min)) {
-      outputNumber = new Decimal(min)
-      outputString = outputNumber.toFixed()
-    }
+    if (clamp) {
+      if (isMin && outputNumber.lt(min)) {
+        outputNumber = new Decimal(min)
+        outputString = outputNumber.toFixed()
+      }
 
-    if (isMax && outputNumber.gt(max)) {
-      outputNumber = new Decimal(max)
-      outputString = outputNumber.toFixed()
+      if (isMax && outputNumber.gt(max)) {
+        outputNumber = new Decimal(max)
+        outputString = outputNumber.toFixed()
+      }
     }
 
     // Set decimals

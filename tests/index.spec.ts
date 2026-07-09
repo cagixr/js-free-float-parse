@@ -35,6 +35,31 @@ describe("jsFreeFloatParse", () => {
     expect(jsFreeFloatParse("5e-8")).toEqual(["0,00000005", 5e-8])
     expect(jsFreeFloatParse("10e+8")).toEqual(["1000000000", 1000000000])
 
+    // Negative coefficients — the sign must not end up inside the digits
+    expect(jsFreeFloatParse("-1.5e-3")).toEqual(["-0,0015", -0.0015])
+    expect(jsFreeFloatParse("-1.5e-3", { dot: true })).toEqual(["-0.0015", -0.0015])
+    expect(jsFreeFloatParse("-5e-8")).toEqual(["-0,00000005", -5e-8])
+    expect(jsFreeFloatParse("-1.3e+8")).toEqual(["-130000000", -130000000])
+
+    // Multi-digit coefficients with negative exponents
+    expect(jsFreeFloatParse("15e-3")).toEqual(["0,015", 0.015])
+    expect(jsFreeFloatParse("1234e-2", { dot: true })).toEqual(["12.34", 12.34])
+    expect(jsFreeFloatParse("12.5e-1", { dot: true })).toEqual(["1.25", 1.25])
+
+    // Bare and uppercase exponents
+    expect(jsFreeFloatParse("1e5")).toEqual(["100000", 100000])
+    expect(jsFreeFloatParse("1E+5")).toEqual(["100000", 100000])
+    expect(jsFreeFloatParse("1.5E-3", { dot: true })).toEqual(["0.0015", 0.0015])
+
+    // Zero exponent
+    expect(jsFreeFloatParse("5e+0")).toEqual(["5", 5])
+    expect(jsFreeFloatParse("5e-0")).toEqual(["5", 5])
+    expect(jsFreeFloatParse("5.5e0")).toEqual(["5,5", 5.5])
+
+    // Absurd exponents are treated like input without digits
+    expect(jsFreeFloatParse("1e+999999999")).toEqual(["0", 0])
+    expect(jsFreeFloatParse("1e-999999999", { keepEmpty: true })).toEqual(["", 0])
+
     expect(jsFreeFloatParse("5.1e-8")).toEqual(["0,000000051", 5.1e-8])
     expect(jsFreeFloatParse("1.3e+8")).toEqual(["130000000", 130000000])
 
@@ -119,6 +144,15 @@ describe("jsFreeFloatParse", () => {
     expect(jsFreeFloatParse("-123ad12")).toEqual(["-12312", -12312])
   })
 
+  it("handles input without digits", () => {
+    expect(jsFreeFloatParse("abc")).toEqual(["0", 0])
+    expect(jsFreeFloatParse("abc", { min: 5 })).toEqual(["5", 5])
+    expect(jsFreeFloatParse("-abc")).toEqual(["-", 0])
+    expect(jsFreeFloatParse("-,")).toEqual(["-", 0])
+    expect(jsFreeFloatParse(".,.")).toEqual(["0", 0])
+    expect(jsFreeFloatParse("  ")).toEqual(["0", 0])
+  })
+
   it("handles zero followed by dot or comma", () => {
     expect(jsFreeFloatParse("0.")).toEqual(["0,", 0])
     expect(jsFreeFloatParse("0,")).toEqual(["0,", 0])
@@ -186,6 +220,40 @@ describe("jsFreeFloatParse", () => {
       expect(jsFreeFloatParse("5.1e-8", { decimals: 8 })).toEqual(["0,00000005", 5e-8])
       expect(jsFreeFloatParse("5.1e-8", { decimals: 9 })).toEqual(["0,000000051", 5.1e-8])
       expect(jsFreeFloatParse("10e+8", { decimals: 4 })).toEqual(["1000000000", 1000000000])
+    })
+
+    it("min/max correctly with E values", () => {
+      expect(jsFreeFloatParse("5e-8", { min: 1 })).toEqual(["1", 1])
+      expect(jsFreeFloatParse("5e+8", { max: 100 })).toEqual(["100", 100])
+    })
+
+    it("keepEmpty correctly", () => {
+      expect(jsFreeFloatParse("", { keepEmpty: true })).toEqual(["", 0])
+      expect(jsFreeFloatParse("", { keepEmpty: true, min: 20 })).toEqual(["", 0])
+      expect(jsFreeFloatParse("abc", { keepEmpty: true })).toEqual(["", 0])
+      expect(jsFreeFloatParse("123", { keepEmpty: true })).toEqual(["123", 123])
+    })
+
+    it("clamp correctly", () => {
+      expect(jsFreeFloatParse("2", { min: 10, clamp: false })).toEqual(["2", 2])
+      expect(jsFreeFloatParse("100", { max: 90, clamp: false })).toEqual(["100", 100])
+      expect(jsFreeFloatParse("2", { min: 10 })).toEqual(["10", 10])
+      // min still acts as the default for empty input
+      expect(jsFreeFloatParse("", { min: 10, clamp: false })).toEqual(["10", 10])
+    })
+
+    it("groupSeparators correctly", () => {
+      const options = { dot: true, groupSeparators: true }
+      expect(jsFreeFloatParse("1,234.56", options)).toEqual(["1234.56", 1234.56])
+      expect(jsFreeFloatParse("1,234,567", options)).toEqual(["1234567", 1234567])
+      expect(jsFreeFloatParse("1,234,567.89", options)).toEqual(["1234567.89", 1234567.89])
+      expect(jsFreeFloatParse("1,234", options)).toEqual(["1234", 1234])
+      // Comma followed by 1-2 or 4+ digits is still a decimal separator
+      expect(jsFreeFloatParse("1,23", options)).toEqual(["1.23", 1.23])
+      expect(jsFreeFloatParse("12,3456", options)).toEqual(["12.3456", 12.3456])
+      expect(jsFreeFloatParse("1,23", { groupSeparators: true })).toEqual(["1,23", 1.23])
+      // Off by default
+      expect(jsFreeFloatParse("1,234.56")).toEqual(["1,23456", 1.23456])
     })
 
     it("min correctly", () => {
