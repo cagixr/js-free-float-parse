@@ -1,10 +1,4 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.default = jsFreeFloatParse;
-const decimal_js_1 = __importDefault(require("decimal.js"));
+import Decimal from "decimal.js";
 function replaceDotByComma(input, dot = false) {
     return dot ? input : input.replace(".", ",");
 }
@@ -21,12 +15,12 @@ function applyDecimals(input, decimals) {
     }
     return input;
 }
-function jsFreeFloatParse(input, options) {
+export default function jsFreeFloatParse(input, options) {
     try {
         const { min, max, dot = false, decimals, keepEmpty = false, clamp = true, groupSeparators = false } = options || {};
         const isMin = typeof min === "number";
         const isMax = typeof max === "number";
-        let outputNumber = new decimal_js_1.default(isMin ? min : 0);
+        let outputNumber = new Decimal(isMin ? min : 0);
         let outputString = outputNumber.toString();
         // eslint-disable-next-line no-inner-declarations
         function result() {
@@ -147,22 +141,22 @@ function jsFreeFloatParse(input, options) {
         /*
          * Final check and decimals
          * */
-        outputNumber = new decimal_js_1.default(input);
+        outputNumber = new Decimal(input);
         outputString = input;
         // Apply min/max
         if (clamp) {
             if (isMin && outputNumber.lt(min)) {
-                outputNumber = new decimal_js_1.default(min);
+                outputNumber = new Decimal(min);
                 outputString = outputNumber.toFixed();
             }
             if (isMax && outputNumber.gt(max)) {
-                outputNumber = new decimal_js_1.default(max);
+                outputNumber = new Decimal(max);
                 outputString = outputNumber.toFixed();
             }
         }
         // Set decimals
         outputString = applyDecimals(outputString, decimals);
-        outputNumber = new decimal_js_1.default(outputString);
+        outputNumber = new Decimal(outputString);
         return result();
     }
     catch (e) {
